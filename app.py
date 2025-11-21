@@ -81,6 +81,22 @@ CUSTOM_CSS = """
 
   /* Buttons */
   .stButton > button {
+    /* Download button (st.download_button) */
+  .stDownloadButton > button {
+    border-radius: 12px !important;
+    padding: 0.65rem 1rem !important;
+    font-weight: 700 !important;
+    border: 1px solid #e7e9f2 !important;
+    background: #0f172a !important;   /* sötét háttér */
+    color: #ffffff !important;        /* FEHÉR szöveg, mindig látszik */
+    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.10) !important;
+  }
+
+  .stDownloadButton > button:hover {
+    background: #111c34 !important;
+    transform: translateY(-1px);
+  }
+
     border-radius: 12px !important;
     padding: 0.65rem 1rem !important;
     font-weight: 700 !important;
