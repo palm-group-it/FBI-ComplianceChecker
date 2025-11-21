@@ -1,0 +1,188 @@
+Goal
+
+Create a small web app that lets compliance users upload an Excel export and instantly see which sales agents deviate significantly from the company’s overall insurer mix by count only. The app must calculate baseline distributions from the uploaded file, compare each agent’s distribution within each line of business, and highlight deviations both upward and downward using one user-defined threshold.
+
+Tech Constraints
+
+Use Python + Streamlit for fastest delivery and simple, clean UI.
+
+Use pandas for data processing.
+
+The app must run as a single Streamlit script (e.g., app.py).
+
+Input File
+
+Users will upload an .xlsx file with multiple sheets. The relevant sheet is typically called:
+
+"DosszieAdatok282 - eredeti"
+
+But the app must allow selecting any sheet.
+
+Required Columns (from the uploaded sheet)
+
+Map these exact columns:
+
+UkKodja1 → agent_id
+
+Megnevezés → line_of_business (LOB / “sector”)
+
+RövidNév → insurer
+
+Each row = 1 contract, so count = 1 per row
+
+Other columns may exist but are irrelevant for the calculation.
+
+No date filtering needed. The uploaded Excel already represents the correct period.
+
+Core Logic (must match exactly)
+Step 1 — Baseline insurer mix (company-wide)
+
+For each line_of_business (Megnevezés), compute the company-wide distribution by count over insurers (RövidNév):
+
+base_count(line, insurer) = number of rows where Megnevezés=line and RövidNév=insurer
+
+line_total_count(line) = number of rows where Megnevezés=line
+
+base_share(line, insurer) = base_count / line_total_count
+
+Step 2 — Agent mix by line and insurer
+
+For each agent (UkKodja1) and each line (Megnevezés), compute their insurer distribution by count:
+
+agent_count(agent, line, insurer)
+
+agent_line_total(agent, line)
+
+agent_share(agent, line, insurer) = agent_count / agent_line_total
+
+Step 3 — Compare to baseline using one threshold
+
+Users input a single threshold in percentage points (example: 10).
+
+For each (agent, line, insurer):
+
+diff_pp = (agent_share - base_share) * 100
+
+Flagging rules:
+
+If diff_pp > threshold → UP deviation
+
+If diff_pp < -threshold → DOWN deviation
+
+Else → not shown in results.
+
+Important:
+
+Only count is used for flags. Premium/díj must NOT affect anything.
+
+Show both UP and DOWN in the output.
+
+Output Table Requirements
+
+Show only flagged rows, with these columns (use these friendly names in UI):
+
+Agent ID (UkKodja1)
+
+Line of Business (Megnevezés)
+
+Insurer (RövidNév)
+
+Company Count (base_count)
+
+Company Line Total (line_total_count)
+
+Company Share % (base_share * 100)
+
+Agent Count (agent_count)
+
+Agent Line Total (agent_line_total)
+
+Agent Share % (agent_share * 100)
+
+Difference (pp) (diff_pp)
+
+Direction = UP or DOWN
+
+Sorting:
+
+Group by Agent, then Line of Business
+
+Within group, sort by absolute difference descending.
+
+UI Requirements (simple but great)
+
+Use Streamlit with a clean layout:
+
+Header / title
+“FBI Insurer-Mix Deviation Check (Count-Only)”
+
+File uploader
+Accept .xlsx.
+
+Sheet selector
+Dropdown of sheet names after upload.
+
+Threshold input
+Numeric input (float), default 10.0, labeled:
+“Deviation threshold (percentage points). App will flag deviations above +threshold or below −threshold.”
+
+Run analysis button
+Only compute when clicked.
+
+Results section
+
+Display a DataFrame styled with color:
+
+UP deviations (diff_pp > 0) → green background
+
+DOWN deviations (diff_pp < 0) → red background
+
+Color only the Difference (pp) column (or also Direction).
+
+Download button
+Export results to a new Excel file:
+fbi_outliers_threshold_<X>.xlsx
+
+Edge Cases to Handle
+
+Missing values in Megnevezés, RövidNév, or UkKodja1:
+
+Keep them as their own group; do not drop rows silently.
+
+If an agent has very few contracts in a line (e.g., < 5):
+
+Still compute and show if deviation exceeds threshold (no extra logic needed).
+
+If baseline share is NaN because of weird data, skip those rows gracefully.
+
+Acceptance Criteria
+
+The app is correct if:
+
+Uploading the sample Excel and selecting "DosszieAdatok282 - eredeti" produces a baseline per Megnevezés.
+
+For each UkKodja1, their insurer shares within each Megnevezés are computed by count.
+
+Results show only rows where deviation abs(diff_pp) > threshold.
+
+UP and DOWN are both shown and colored differently.
+
+Results can be downloaded as Excel.
+
+Deliverables
+
+A single Streamlit app file (app.py)
+
+requirements.txt with:
+
+streamlit
+
+pandas
+
+openpyxl
+
+xlsxwriter
+
+If you want, you can also include this note at the end to guide Replit AI:
+
+“Implement the data logic in a separate function compute_outliers_count_only(df, threshold) and keep UI minimal and polished. Do not add premium-based logic.”
