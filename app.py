@@ -111,6 +111,45 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold: float, min_contract
     return output
 
 
+def create_summary_dashboard(results: pd.DataFrame) -> dict:
+    """
+    Create summary statistics and top insights from flagged deviations.
+    
+    Args:
+        results: DataFrame with flagged deviations
+        
+    Returns:
+        Dictionary with summary statistics and top lists
+    """
+    summary = {}
+    
+    summary['top_agents'] = (
+        results.groupby('Agent ID')['Difference (pp)']
+        .apply(lambda x: x.abs().max())
+        .nlargest(10)
+        .reset_index()
+    )
+    summary['top_agents'].columns = ['Agent ID', 'Max Deviation (pp)']
+    
+    summary['affected_insurers'] = (
+        results.groupby('Insurer')
+        .size()
+        .nlargest(10)
+        .reset_index()
+    )
+    summary['affected_insurers'].columns = ['Insurer', 'Number of Deviations']
+    
+    summary['top_lobs'] = (
+        results.groupby('Line of Business')
+        .size()
+        .nlargest(10)
+        .reset_index()
+    )
+    summary['top_lobs'].columns = ['Line of Business', 'Number of Deviations']
+    
+    return summary
+
+
 def style_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Apply color styling to the results DataFrame."""
     def highlight_diff(row):
@@ -210,7 +249,22 @@ def main():
                             with col3:
                                 st.metric("DOWN Deviations", down_count)
                             
-                            st.subheader("Flagged Deviations")
+                            st.subheader("📊 Summary Dashboard")
+                            summary = create_summary_dashboard(results)
+                            
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.markdown("**Top Deviating Agents**")
+                                st.dataframe(summary['top_agents'], hide_index=True, use_container_width=True)
+                            with col2:
+                                st.markdown("**Most Affected Insurers**")
+                                st.dataframe(summary['affected_insurers'], hide_index=True, use_container_width=True)
+                            with col3:
+                                st.markdown("**Lines of Business with Most Deviations**")
+                                st.dataframe(summary['top_lobs'], hide_index=True, use_container_width=True)
+                            
+                            st.divider()
+                            st.subheader("📋 Detailed Flagged Deviations")
                             
                             styled_df = style_dataframe(results)
                             st.dataframe(
