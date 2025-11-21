@@ -1,335 +1,241 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import io
+from typing import Tuple
 
-# -------------------------------------------------
-# Page config
-# -------------------------------------------------
-st.set_page_config(
-    page_title="Független Biztosításközvetítő Iroda – Risk kalkulátor",
-    page_icon="🕵️",
-    layout="wide"
-)
-
-# -------------------------------------------------
-# LIGHT UI CSS
-# -------------------------------------------------
-CUSTOM_CSS = """
-<style>
-  .stApp {
-    background: #f6f7fb;
-    color: #0f172a;
-    font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-  }
-
-  .block-container { padding-top: 2rem; padding-bottom: 2rem; }
-
-  /* Top hero */
-  .hero {
-    background: #ffffff;
-    border: 1px solid #e7e9f2;
-    border-radius: 20px;
-    padding: 22px 22px;
-    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
-    margin-bottom: 16px;
-  }
-  .hero h1 {
-    font-size: 2.0rem;
-    margin: 0 0 6px 0;
-    letter-spacing: 0.2px;
-  }
-  .hero p {
-    margin: 0;
-    color: #475569;
-    font-size: 1.02rem;
-    line-height: 1.6;
-  }
-
-  /* Cards */
-  .card {
-    background: #ffffff;
-    border: 1px solid #e7e9f2;
-    border-radius: 16px;
-    padding: 16px 16px;
-    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
-  }
-  .card-title {
-    font-weight: 600;
-    font-size: 1.05rem;
-    margin-bottom: 8px;
-    color: #0f172a;
-  }
-  .muted {
-    color: #64748b;
-    font-size: 0.95rem;
-  }
-
-  /* Badges */
-  .badge {
-    display: inline-block;
-    padding: 3px 10px;
-    border-radius: 999px;
-    font-size: 0.80rem;
-    font-weight: 700;
-    letter-spacing: .3px;
-    margin-right: 6px;
-    border: 1px solid #e7e9f2;
-  }
-  .badge-up   { background: #eafaf0; color: #166534; border-color:#c7f0d6; }
-  .badge-down { background: #fdecec; color: #991b1b; border-color:#f7caca; }
-  .badge-info { background: #eef2ff; color: #3730a3; border-color:#dfe3ff; }
-
-  /* Buttons */
-  .stButton > button {
-    border-radius: 12px !important;
-    padding: 0.65rem 1rem !important;
-    font-weight: 700 !important;
-    border: 1px solid #e7e9f2 !important;
-    background: #0f172a !important;
-    color: #ffffff !important;
-    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.10) !important;
-  }
-  .stButton > button:hover {
-    background: #111c34 !important;
-    transform: translateY(-1px);
-  }
-
-  /* DataFrame wrap */
-  .dataframe-wrap {
-    background: #ffffff;
-    border: 1px solid #e7e9f2;
-    border-radius: 16px;
-    padding: 8px;
-    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
-    margin-top: 8px;
-  }
-
-  /* Metric cards tweak */
-  div[data-testid="metric-container"] {
-    background: #ffffff;
-    border: 1px solid #e7e9f2;
-    border-radius: 14px;
-    padding: 12px 10px;
-    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.04);
-  }
-</style>
-"""
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+st.set_page_config(page_title="FBI Insurer-Mix Deviation Check", layout="wide")
 
 
-# -------------------------------------------------
-# HERO
-# -------------------------------------------------
-st.markdown(
+def compute_outliers_count_only(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
     """
-    <div class="hero">
-      <h1>
-        Független Biztosításközvetítő Iroda – Risk kalkulátor
-        <span class="badge badge-info">Darabszám alapú eltérésvizsgálat</span>
-      </h1>
-      <p>
-        Ez az eszköz az FB Irodán belüli megfelelőségi ellenőrzést támogatja:
-        a feltöltött Excel állomány alapján kiszámolja a teljes cég biztosító-mixét
-        ágazatonként, majd megmutatja, hogy az egyes üzletkötők mely ágazatokban térnek el.
-      </p>
-      <p class="muted" style="margin-top:8px;">
-        Logika: baseline (cég) vs. üzletkötői mix ágazaton belül, darabszám alapján.
-      </p>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-
-# -------------------------------------------------
-# INPUT CARDS
-# -------------------------------------------------
-col1, col2 = st.columns([1.3, 1])
-
-with col1:
-    st.markdown('<div class="card"><div class="card-title">1) Excel feltöltése</div>', unsafe_allow_html=True)
-    uploaded = st.file_uploader("Excel file (.xlsx)", type=["xlsx"], label_visibility="collapsed")
-    st.markdown(
-        '<div class="muted">Tipp: válaszd a “DosszieAdatok282 - eredeti” sheetet.</div></div>',
-        unsafe_allow_html=True
+    Compute insurer mix deviations by count only.
+    
+    Args:
+        df: DataFrame with columns 'UkKodja1', 'Megnevezés', 'RövidNév'
+        threshold: Deviation threshold in percentage points
+        
+    Returns:
+        DataFrame with flagged deviations
+    """
+    required_cols = ['UkKodja1', 'Megnevezés', 'RövidNév']
+    for col in required_cols:
+        if col not in df.columns:
+            raise ValueError(f"Missing required column: {col}")
+    
+    df = df[required_cols].copy()
+    df.columns = ['agent_id', 'line_of_business', 'insurer']
+    
+    baseline = (
+        df.groupby(['line_of_business', 'insurer'])
+        .size()
+        .reset_index(name='base_count')
     )
-
-with col2:
-    st.markdown('<div class="card"><div class="card-title">2) Küszöb beállítása</div>', unsafe_allow_html=True)
-    threshold_pct = st.number_input(
-        "Eltérési küszöb (százalékpont, pp)",
-        min_value=0.0,
-        max_value=100.0,
-        value=20.0,
-        step=0.5
+    
+    line_totals = (
+        df.groupby('line_of_business')
+        .size()
+        .reset_index(name='line_total_count')
     )
-    st.markdown(
-        f"""
-        <div style="margin-top:6px;">
-          <span class="badge badge-up">UP ha diff &gt; +{threshold_pct:.1f} pp</span>
-          <span class="badge badge-down">DOWN ha diff &lt; −{threshold_pct:.1f} pp</span>
-        </div>
-        </div>
-        """,
-        unsafe_allow_html=True
+    
+    baseline = baseline.merge(line_totals, on='line_of_business')
+    baseline['base_share'] = baseline['base_count'] / baseline['line_total_count']
+    
+    agent_counts = (
+        df.groupby(['agent_id', 'line_of_business', 'insurer'])
+        .size()
+        .reset_index(name='agent_count')
     )
-
-
-# -------------------------------------------------
-# BUSINESS LOGIC – FINAL FIXED VERSION
-# -------------------------------------------------
-line_col = "Megnevezés"
-insurer_col = "RövidNév"
-agent_col = "UkKodja1"
-
-def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
-
-    d = df.copy()
-    d["count"] = 1
-
-    # 1) baseline
-    base = d.groupby([line_col, insurer_col], dropna=False).agg(
-        base_count=("count", "sum")
-    ).reset_index()
-
-    base_totals = d.groupby([line_col], dropna=False).agg(
-        line_total=("count", "sum")
-    ).reset_index()
-
-    base = base.merge(base_totals, on=line_col, how="left")
-    base["base_share"] = base["base_count"] / base["line_total"]
-
-    # 2) agent mix
-    agent = d.groupby([agent_col, line_col, insurer_col], dropna=False).agg(
-        agent_count=("count", "sum")
-    ).reset_index()
-
-    agent_totals = d.groupby([agent_col, line_col], dropna=False).agg(
-        agent_line_total=("count", "sum")
-    ).reset_index()
-
-    agent = agent.merge(agent_totals, on=[agent_col, line_col], how="left")
-    agent["agent_share"] = agent["agent_count"] / agent["agent_line_total"]
-
-    # 3) összevetés
-    out = agent.merge(base, on=[line_col, insurer_col], how="left")
-    out["diff_pp"] = (out["agent_share"] - out["base_share"]) * 100
-
-    # 4) HELYES, STABIL SZŰRÉS – 357 sor eredmény
-    outliers = out[np.abs(out["diff_pp"]) > float(threshold_pct)].copy()
-
-    # 5) irány
-    outliers["Irány"] = np.where(outliers["diff_pp"] > 0, "UP", "DOWN")
-
-    # 6) kimeneti oszlopok
-    outliers["Company Share %"] = (outliers["base_share"] * 100).round(2)
-    outliers["Agent Share %"] = (outliers["agent_share"] * 100).round(2)
-    outliers["Difference (pp)"] = outliers["diff_pp"].round(2)
-
-    outliers = outliers.rename(columns={
-        agent_col: "Üzletkötő kód",
-        line_col: "Ágazat",
-        insurer_col: "Biztosító",
-        "base_count": "Céges db",
-        "line_total": "Céges ágazati db",
-        "agent_count": "Üzletkötői db",
-        "agent_line_total": "Üzletkötői ágazati db"
-    })
-
-    # 7) rendezés
-    outliers["abs"] = outliers["Difference (pp)"].abs()
-    outliers = outliers.sort_values(
-        ["Üzletkötő kód", "Ágazat", "abs"],
+    
+    agent_line_totals = (
+        df.groupby(['agent_id', 'line_of_business'])
+        .size()
+        .reset_index(name='agent_line_total')
+    )
+    
+    agent_data = agent_counts.merge(
+        agent_line_totals, 
+        on=['agent_id', 'line_of_business']
+    )
+    agent_data['agent_share'] = agent_data['agent_count'] / agent_data['agent_line_total']
+    
+    results = agent_data.merge(
+        baseline,
+        on=['line_of_business', 'insurer'],
+        how='left'
+    )
+    
+    results['diff_pp'] = (results['agent_share'] - results['base_share']) * 100
+    
+    results = results.dropna(subset=['diff_pp'])
+    
+    flagged = results[results['diff_pp'].abs() > threshold].copy()
+    
+    flagged['direction'] = flagged['diff_pp'].apply(lambda x: 'UP' if x > 0 else 'DOWN')
+    
+    flagged['company_share_pct'] = flagged['base_share'] * 100
+    flagged['agent_share_pct'] = flagged['agent_share'] * 100
+    
+    output = flagged[[
+        'agent_id', 'line_of_business', 'insurer',
+        'base_count', 'line_total_count', 'company_share_pct',
+        'agent_count', 'agent_line_total', 'agent_share_pct',
+        'diff_pp', 'direction'
+    ]].copy()
+    
+    output.columns = [
+        'Agent ID', 'Line of Business', 'Insurer',
+        'Company Count', 'Company Line Total', 'Company Share %',
+        'Agent Count', 'Agent Line Total', 'Agent Share %',
+        'Difference (pp)', 'Direction'
+    ]
+    
+    output['abs_diff'] = output['Difference (pp)'].abs()
+    output = output.sort_values(
+        ['Agent ID', 'Line of Business', 'abs_diff'],
         ascending=[True, True, False]
-    ).drop(columns=["abs", "base_share", "agent_share", "diff_pp"])
-
-    return outliers
-
-
-# -------------------------------------------------
-# COLOR FUNCTIONS
-# -------------------------------------------------
-def color_diff(val):
-    if pd.isna(val):
-        return ""
-    return (
-        "background-color:#eafaf0;color:#166534;font-weight:700;"
-        if val > 0 else
-        "background-color:#fdecec;color:#991b1b;font-weight:700;"
     )
-
-def color_direction(val):
-    if val == "UP":
-        return "color:#166534;font-weight:800;"
-    if val == "DOWN":
-        return "color:#991b1b;font-weight:800;"
-    return ""
+    output = output.drop(columns=['abs_diff'])
+    
+    return output
 
 
-# -------------------------------------------------
-# RUN
-# -------------------------------------------------
-if not uploaded:
-    st.info("Tölts fel egy Excel fájlt az elemzéshez.")
-else:
-    xls = pd.ExcelFile(uploaded)
-    sheet = st.selectbox("Sheet kiválasztása", xls.sheet_names, index=0)
-    df = pd.read_excel(uploaded, sheet_name=sheet)
+def style_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply color styling to the results DataFrame."""
+    def highlight_diff(row):
+        styles = [''] * len(row)
+        diff_idx = df.columns.get_loc('Difference (pp)')
+        direction_idx = df.columns.get_loc('Direction')
+        
+        if row['Direction'] == 'UP':
+            styles[diff_idx] = 'background-color: #90EE90'
+            styles[direction_idx] = 'background-color: #90EE90'
+        elif row['Direction'] == 'DOWN':
+            styles[diff_idx] = 'background-color: #FFB6C6'
+            styles[direction_idx] = 'background-color: #FFB6C6'
+        
+        return styles
+    
+    return df.style.apply(highlight_diff, axis=1)
 
-    # METRICS
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Sorok száma", f"{len(df):,}")
-    m2.metric("Üzletkötők száma", f"{df[agent_col].nunique(dropna=False):,}")
-    m3.metric("Ágazatok száma", f"{df[line_col].nunique(dropna=False):,}")
 
-    # BUTTON
-    if st.button("Elemzés futtatása"):
-
-        outliers = compute_outliers_count_only(df, threshold_pct)
-
-        st.markdown(
-            """
-            <div class="card" style="margin-top:6px;">
-              <div class="card-title">Kiugró eltérések</div>
-              <div class="muted">
-                Csak azok a sorok jelennek meg, ahol az eltérés abszolút értéke
-                meghaladja a küszöböt.
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        st.markdown('<div class="dataframe-wrap">', unsafe_allow_html=True)
-
-        styled = (
-            outliers.style
-                .applymap(color_diff, subset=["Difference (pp)"])
-                .applymap(color_direction, subset=["Irány"])
-        )
-
-        st.dataframe(styled, use_container_width=True, height=520)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        # EXPORT
-        export_name = f"fbi_outliers_threshold_{threshold_pct:.1f}.xlsx"
-        with pd.ExcelWriter(export_name, engine="xlsxwriter") as writer:
-            outliers.to_excel(writer, index=False, sheet_name="outliers")
-
-        with open(export_name, "rb") as f:
-            st.download_button(
-                "Eredmények letöltése (.xlsx)",
-                data=f,
-                file_name=export_name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+def main():
+    st.title("🔍 FBI Insurer-Mix Deviation Check (Count-Only)")
+    
+    st.markdown("""
+    Upload an Excel file to analyze which sales agents deviate significantly from the company's 
+    overall insurer mix distribution within each line of business.
+    """)
+    
+    uploaded_file = st.file_uploader(
+        "Upload Excel file (.xlsx)", 
+        type=['xlsx'],
+        help="Select the Excel file containing contract data"
+    )
+    
+    if uploaded_file is not None:
+        try:
+            excel_file = pd.ExcelFile(uploaded_file)
+            sheet_names = excel_file.sheet_names
+            
+            default_idx = 0
+            if "DosszieAdatok282 - eredeti" in sheet_names:
+                default_idx = sheet_names.index("DosszieAdatok282 - eredeti")
+            
+            selected_sheet = st.selectbox(
+                "Select sheet to analyze",
+                sheet_names,
+                index=default_idx
             )
+            
+            threshold = st.number_input(
+                "Deviation threshold (percentage points)",
+                min_value=0.0,
+                max_value=100.0,
+                value=10.0,
+                step=0.5,
+                help="App will flag deviations above +threshold or below −threshold"
+            )
+            
+            if st.button("🚀 Run Analysis", type="primary"):
+                with st.spinner("Analyzing data..."):
+                    df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+                    
+                    st.info(f"Loaded {len(df):,} rows from sheet '{selected_sheet}'")
+                    
+                    required_cols = ['UkKodja1', 'Megnevezés', 'RövidNév']
+                    missing_cols = [col for col in required_cols if col not in df.columns]
+                    
+                    if missing_cols:
+                        st.error(f"Missing required columns: {', '.join(missing_cols)}")
+                        st.write("Available columns:", list(df.columns))
+                    else:
+                        results = compute_outliers_count_only(df, threshold)
+                        
+                        if len(results) == 0:
+                            st.warning(f"No deviations found above the threshold of ±{threshold} percentage points.")
+                        else:
+                            st.success(f"Found {len(results):,} flagged deviations")
+                            
+                            up_count = (results['Direction'] == 'UP').sum()
+                            down_count = (results['Direction'] == 'DOWN').sum()
+                            
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Total Deviations", len(results))
+                            with col2:
+                                st.metric("UP Deviations", up_count)
+                            with col3:
+                                st.metric("DOWN Deviations", down_count)
+                            
+                            st.subheader("Flagged Deviations")
+                            
+                            styled_df = style_dataframe(results)
+                            st.dataframe(
+                                styled_df,
+                                use_container_width=True,
+                                height=600
+                            )
+                            
+                            output = io.BytesIO()
+                            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                                results.to_excel(writer, index=False, sheet_name='Deviations')
+                                
+                                workbook = writer.book
+                                worksheet = writer.sheets['Deviations']
+                                
+                                up_format = workbook.add_format({'bg_color': '#90EE90'})
+                                down_format = workbook.add_format({'bg_color': '#FFB6C6'})
+                                
+                                diff_col_idx = results.columns.get_loc('Difference (pp)')
+                                direction_col_idx = results.columns.get_loc('Direction')
+                                
+                                for row_idx, direction in enumerate(results['Direction'], start=1):
+                                    if direction == 'UP':
+                                        worksheet.write(row_idx, diff_col_idx, 
+                                                      results.iloc[row_idx - 1]['Difference (pp)'], 
+                                                      up_format)
+                                        worksheet.write(row_idx, direction_col_idx, 'UP', up_format)
+                                    elif direction == 'DOWN':
+                                        worksheet.write(row_idx, diff_col_idx, 
+                                                      results.iloc[row_idx - 1]['Difference (pp)'], 
+                                                      down_format)
+                                        worksheet.write(row_idx, direction_col_idx, 'DOWN', down_format)
+                            
+                            excel_data = output.getvalue()
+                            
+                            st.download_button(
+                                label="📥 Download Results as Excel",
+                                data=excel_data,
+                                file_name=f"fbi_outliers_threshold_{threshold}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        
+        except Exception as e:
+            st.error(f"Error processing file: {str(e)}")
+            st.exception(e)
+    else:
+        st.info("👆 Please upload an Excel file to begin analysis")
 
-        st.markdown(
-            """
-            <div class="muted" style="margin-top:12px;">
-              Megjegyzés: a kiugró eltérés nem automatikusan részrehajlás bizonyítéka;
-              inkább azt jelzi, hogy érdemes áttekinteni az adott üzletkötő portfólióját.
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+
+if __name__ == "__main__":
+    main()
