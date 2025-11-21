@@ -204,9 +204,11 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
     base = d.groupby([line_col, insurer_col], dropna=False).agg(
         base_count=("count", "sum")
     ).reset_index()
+
     base_totals = d.groupby([line_col], dropna=False).agg(
         line_total=("count", "sum")
     ).reset_index()
+
     base = base.merge(base_totals, on=line_col, how="left")
     base["base_share"] = base["base_count"] / base["line_total"]
 
@@ -214,29 +216,30 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
     agent = d.groupby([agent_col, line_col, insurer_col], dropna=False).agg(
         agent_count=("count", "sum")
     ).reset_index()
+
     agent_totals = d.groupby([agent_col, line_col], dropna=False).agg(
         agent_line_total=("count", "sum")
     ).reset_index()
+
     agent = agent.merge(agent_totals, on=[agent_col, line_col], how="left")
     agent["agent_share"] = agent["agent_count"] / agent["agent_line_total"]
 
-    # 3) compare
+    # 3) baseline vs agent compare (%)
     out = agent.merge(base, on=[line_col, insurer_col], how="left")
     out["diff_pp"] = (out["agent_share"] - out["base_share"]) * 100
 
-    out["direction"] = np.select(
-    [out["diff_pp"] > threshold_pct, out["diff_pp"] < -threshold_pct],
-    ["UP", "DOWN"],
-    default=None
-)
+    # --- ROBUSZTUS SZŰRÉS: abs eltérés küszöb felett ---
+    outliers = out[np.abs(out["diff_pp"]) > float(threshold_pct)].copy()
 
-    outliers = out[out["direction"].notna()].copy()
+    # irány (UP/DOWN)
+    outliers["direction"] = np.where(outliers["diff_pp"] > 0, "UP", "DOWN")
 
-    # presentation columns
+    # százalékos megjelenítés
     outliers["Company Share %"] = (outliers["base_share"] * 100).round(2)
     outliers["Agent Share %"] = (outliers["agent_share"] * 100).round(2)
     outliers["Difference (pp)"] = outliers["diff_pp"].round(2)
 
+    # átnevezés a felhasználói felületnek megfelelően
     outliers = outliers.rename(columns={
         agent_col: "Üzletkötő kód",
         line_col: "Ágazat",
@@ -248,7 +251,15 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
         "direction": "Irány"
     })
 
-    # sort by abs diff desc within agent+line
+    # sorbarendezés: üzletkötő → ágazat → eltérés mértéke
+    outliers["abs_diff"] = outliers["Difference (pp)"].abs()
+    outliers = outliers.sort_values(
+        by=["Üzletkötő kód", "Ágazat", "abs_diff"],
+        ascending=[True, True, False]
+    ).drop(columns=["abs_diff"])
+
+    return outliers
+
     outliers["abs_diff"] = outliers["Difference (pp)"].abs()
     outliers = outliers.sort_values(
         by=["Üzletkötő kód", "Ágazat", "abs_diff"],
