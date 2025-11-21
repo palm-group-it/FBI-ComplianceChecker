@@ -2,7 +2,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import base64
+import time
 
+# -------------------------------------------------
+# Fullscreen overlay GIF loader
+# -------------------------------------------------
 def show_fullscreen_overlay_gif(gif_path="loading.gif"):
     with open(gif_path, "rb") as f:
         data = base64.b64encode(f.read()).decode("utf-8")
@@ -103,9 +107,8 @@ CUSTOM_CSS = """
   .badge-info { background: #eef2ff; color: #3730a3; border-color:#dfe3ff; }
 
   /* Buttons */
-  /* Buttons */
   .stButton > button {
-    border-radius: 12px !ant;
+    border-radius: 12px !important;
     padding: 0.65rem 1rem !important;
     font-weight: 700 !important;
     border: 1px solid #e7e9f2 !important;
@@ -221,9 +224,8 @@ agent_col = "UkKodja1"
 
 def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
     d = df.copy()
-    d["count"] = 1  # each row = one contract
+    d["count"] = 1
 
-    # 1) baseline per line -> insurer
     base = d.groupby([line_col, insurer_col], dropna=False).agg(
         base_count=("count", "sum")
     ).reset_index()
@@ -233,7 +235,6 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
     base = base.merge(base_totals, on=line_col, how="left")
     base["base_share"] = base["base_count"] / base["line_total"]
 
-    # 2) agent mix per line -> insurer
     agent = d.groupby([agent_col, line_col, insurer_col], dropna=False).agg(
         agent_count=("count", "sum")
     ).reset_index()
@@ -243,19 +244,17 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
     agent = agent.merge(agent_totals, on=[agent_col, line_col], how="left")
     agent["agent_share"] = agent["agent_count"] / agent["agent_line_total"]
 
-    # 3) compare
     out = agent.merge(base, on=[line_col, insurer_col], how="left")
     out["diff_pp"] = (out["agent_share"] - out["base_share"]) * 100
 
     out["direction"] = np.select(
-    [out["diff_pp"] > threshold_pct, out["diff_pp"] < -threshold_pct],
-    ["UP", "DOWN"],
-    default=None
-)
+        [out["diff_pp"] > threshold_pct, out["diff_pp"] < -threshold_pct],
+        ["UP", "DOWN"],
+        default=None
+    )
 
     outliers = out[out["direction"].notna()].copy()
 
-    # presentation columns
     outliers["Company Share %"] = (outliers["base_share"] * 100).round(2)
     outliers["Agent Share %"] = (outliers["agent_share"] * 100).round(2)
     outliers["Difference (pp)"] = outliers["diff_pp"].round(2)
@@ -271,7 +270,6 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
         "direction": "Irány"
     })
 
-    # sort by abs diff desc within agent+line
     outliers["abs_diff"] = outliers["Difference (pp)"].abs()
     outliers = outliers.sort_values(
         by=["Üzletkötő kód", "Ágazat", "abs_diff"],
@@ -280,7 +278,6 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
 
     return outliers
 
-# Color UP/DOWN in table
 def color_diff(val):
     if pd.isna(val):
         return ""
@@ -310,55 +307,23 @@ else:
     m3.metric("Ágazatok száma", f"{df[line_col].nunique(dropna=False):,}")
 
     st.markdown("")
-if st.button("Elemzés futtatása"):
-    # 1) overlay előkészítése
-    overlay = st.empty()
 
-    # 2) overlay megjelenítése a loading.gif felhasználásával
-    overlay.markdown(show_fullscreen_overlay_gif("loading.gif"), unsafe_allow_html=True)
+    # --- gomb + overlay + számítás ---
+    if st.button("Elemzés futtatása"):
+        overlay = st.empty()
+        overlay.markdown(show_fullscreen_overlay_gif("loading.gif"), unsafe_allow_html=True)
+        time.sleep(0.1)  # <- biztosítja, hogy az overlay kirajzolódjon
 
-    # 3) Az elemzés futtatása
-    outliers = compute_outliers_count_only(df, threshold_pct)
+        st.session_state["outliers"] = compute_outliers_count_only(df, threshold_pct)
+        st.session_state["last_threshold"] = float(threshold_pct)
 
-    # 4) overlay eltüntetése
-    overlay.empty()
+        overlay.empty()
+        st.success("Kész! 🎉")
 
-    # 5) elkészült jelzés
-    st.success("Kész! 🎉")
-
-    # 6) táblázat + export a meglévő kódod szerint
-    st.markdown(
-        """
-        <div class="card" style="margin-top:6px;">
-          <div class="card-title">Kiugró eltérések</div>
-          <div class="muted">Csak azok a sorok jelennek meg, ahol az eltérés abszolút értéke meghaladja a küszöböt (UP vagy DOWN).</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.markdown('<div class="dataframe-wrap">', unsafe_allow_html=True)
-    styled = (
-        outliers.style
-          .applymap(color_diff, subset=["Difference (pp)"])
-          .applymap(color_direction, subset=["Irány"])
-    )
-    st.dataframe(styled, use_container_width=True, height=520)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    export_name = f"fbi_outliers_threshold_{threshold_pct:.1f}.xlsx"
-    with pd.ExcelWriter(export_name, engine="xlsxwriter") as writer:
-        outliers.to_excel(writer, index=False, sheet_name="outliers")
-
-    with open(export_name, "rb") as f:
-        st.download_button(
-            "Eredmények letöltése (.xlsx)",
-            data=f,
-            file_name=export_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        outliers = compute_outliers_count_only(df, threshold_pct)
+    # --- EREDMÉNY MEGJELENÍTÉS CSAK EGYSZER ---
+    if "outliers" in st.session_state:
+        outliers = st.session_state["outliers"]
+        last_thr = st.session_state.get("last_threshold", threshold_pct)
 
         st.markdown(
             """
@@ -379,7 +344,7 @@ if st.button("Elemzés futtatása"):
         st.dataframe(styled, use_container_width=True, height=520)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        export_name = f"fbi_outliers_threshold_{threshold_pct:.1f}.xlsx"
+        export_name = f"fbi_outliers_threshold_{last_thr:.1f}.xlsx"
         with pd.ExcelWriter(export_name, engine="xlsxwriter") as writer:
             outliers.to_excel(writer, index=False, sheet_name="outliers")
 
@@ -388,13 +353,15 @@ if st.button("Elemzés futtatása"):
                 "Eredmények letöltése (.xlsx)",
                 data=f,
                 file_name=export_name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"download_{last_thr:.1f}"
             )
 
         st.markdown(
             """
             <div class="muted" style="margin-top:12px;">
-              Megjegyzés: a kiugró eltérés nem automatikusan részrehajlás bizonyítéka; inkább azt jelzi, hogy érdemes kontextus alapján áttekinteni az adott üzletkötő portfólióját.
+              Megjegyzés: a kiugró eltérés nem automatikusan részrehajlás bizonyítéka; inkább azt jelzi,
+              hogy érdemes kontextus alapján áttekinteni az adott üzletkötő portfólióját.
             </div>
             """,
             unsafe_allow_html=True
