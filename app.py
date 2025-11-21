@@ -80,23 +80,8 @@ CUSTOM_CSS = """
   .badge-info { background: #eef2ff; color: #3730a3; border-color:#dfe3ff; }
 
   /* Buttons */
+  /* Buttons */
   .stButton > button {
-    /* Download button (st.download_button) */
-  .stDownloadButton > button {
-    border-radius: 12px !important;
-    padding: 0.65rem 1rem !important;
-    font-weight: 700 !important;
-    border: 1px solid #e7e9f2 !important;
-    background: #0f172a !important;   /* sötét háttér */
-    color: #ffffff !important;        /* FEHÉR szöveg, mindig látszik */
-    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.10) !important;
-  }
-
-  .stDownloadButton > button:hover {
-    background: #111c34 !important;
-    transform: translateY(-1px);
-  }
-
     border-radius: 12px !important;
     padding: 0.65rem 1rem !important;
     font-weight: 700 !important;
@@ -105,7 +90,24 @@ CUSTOM_CSS = """
     color: #ffffff !important;
     box-shadow: 0 6px 14px rgba(15, 23, 42, 0.10) !important;
   }
+
   .stButton > button:hover {
+    background: #111c34 !important;
+    transform: translateY(-1px);
+  }
+
+  /* Download button (st.download_button) */
+  .stDownloadButton > button {
+    border-radius: 12px !important;
+    padding: 0.65rem 1rem !important;
+    font-weight: 700 !important;
+    border: 1px solid #e7e9f2 !important;
+    background: #0f172a !important;
+    color: #ffffff !important;
+    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.10) !important;
+  }
+
+  .stDownloadButton > button:hover {
     background: #111c34 !important;
     transform: translateY(-1px);
   }
