@@ -25,14 +25,18 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold: float) -> pd.DataFr
     df = df[required_cols].copy()
     df.columns = ['agent_id', 'line_of_business', 'insurer']
     
+    df['agent_id'] = df['agent_id'].fillna('(Missing)')
+    df['line_of_business'] = df['line_of_business'].fillna('(Missing)')
+    df['insurer'] = df['insurer'].fillna('(Missing)')
+    
     baseline = (
-        df.groupby(['line_of_business', 'insurer'])
+        df.groupby(['line_of_business', 'insurer'], dropna=False)
         .size()
         .reset_index(name='base_count')
     )
     
     line_totals = (
-        df.groupby('line_of_business')
+        df.groupby('line_of_business', dropna=False)
         .size()
         .reset_index(name='line_total_count')
     )
@@ -41,13 +45,13 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold: float) -> pd.DataFr
     baseline['base_share'] = baseline['base_count'] / baseline['line_total_count']
     
     agent_counts = (
-        df.groupby(['agent_id', 'line_of_business', 'insurer'])
+        df.groupby(['agent_id', 'line_of_business', 'insurer'], dropna=False)
         .size()
         .reset_index(name='agent_count')
     )
     
     agent_line_totals = (
-        df.groupby(['agent_id', 'line_of_business'])
+        df.groupby(['agent_id', 'line_of_business'], dropna=False)
         .size()
         .reset_index(name='agent_line_total')
     )
