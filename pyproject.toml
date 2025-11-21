@@ -5,4 +5,7 @@ description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
     "streamlit>=1.51.0",
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",
+    "xlsxwriter>=3.1.0",
 ]
