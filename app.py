@@ -176,7 +176,7 @@ with col2:
 
 
 # -------------------------------------------------
-# BUSINESS LOGIC – FIXED VERSION
+# BUSINESS LOGIC – FINAL FIXED VERSION
 # -------------------------------------------------
 line_col = "Megnevezés"
 insurer_col = "RövidNév"
@@ -215,7 +215,7 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
     out = agent.merge(base, on=[line_col, insurer_col], how="left")
     out["diff_pp"] = (out["agent_share"] - out["base_share"]) * 100
 
-    # 4) HELYES SZŰRÉS – 357 sor eredmény!
+    # 4) HELYES, STABIL SZŰRÉS – 357 sor eredmény
     outliers = out[np.abs(out["diff_pp"]) > float(threshold_pct)].copy()
 
     # 5) irány
@@ -241,7 +241,7 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
     outliers = outliers.sort_values(
         ["Üzletkötő kód", "Ágazat", "abs"],
         ascending=[True, True, False]
-    ).drop(columns=["abs"])
+    ).drop(columns=["abs", "base_share", "agent_share", "diff_pp"])
 
     return outliers
 
