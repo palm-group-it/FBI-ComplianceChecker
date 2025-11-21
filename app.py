@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+import numpy as np
 import io
 from typing import Tuple
 
@@ -191,6 +192,84 @@ def create_distribution_chart(agent_id: str, lob: str, source_df: pd.DataFrame) 
     return fig
 
 
+def compute_sensitivity_analysis(df: pd.DataFrame, threshold_range: list, min_contracts: int = 0) -> pd.DataFrame:
+    """
+    Compute sensitivity analysis across multiple thresholds.
+    
+    Args:
+        df: Source DataFrame
+        threshold_range: List of threshold values to test
+        min_contracts: Minimum contracts filter
+        
+    Returns:
+        DataFrame with sensitivity analysis results
+    """
+    sensitivity_results = []
+    
+    for threshold in threshold_range:
+        results = compute_outliers_count_only(df, threshold, min_contracts)
+        
+        sensitivity_results.append({
+            'Threshold': threshold,
+            'Total Deviations': len(results),
+            'UP Deviations': (results['Direction'] == 'UP').sum() if len(results) > 0 else 0,
+            'DOWN Deviations': (results['Direction'] == 'DOWN').sum() if len(results) > 0 else 0,
+            'Unique Agents': results['Agent ID'].nunique() if len(results) > 0 else 0
+        })
+    
+    return pd.DataFrame(sensitivity_results)
+
+
+def create_sensitivity_chart(sensitivity_df: pd.DataFrame) -> go.Figure:
+    """
+    Create a line chart showing sensitivity analysis.
+    
+    Args:
+        sensitivity_df: DataFrame with sensitivity analysis results
+        
+    Returns:
+        Plotly figure showing sensitivity trends
+    """
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=sensitivity_df['Threshold'],
+        y=sensitivity_df['Total Deviations'],
+        mode='lines+markers',
+        name='Total Deviations',
+        line=dict(color='purple', width=2),
+        marker=dict(size=8)
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=sensitivity_df['Threshold'],
+        y=sensitivity_df['UP Deviations'],
+        mode='lines+markers',
+        name='UP Deviations',
+        line=dict(color='green', width=2),
+        marker=dict(size=8)
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=sensitivity_df['Threshold'],
+        y=sensitivity_df['DOWN Deviations'],
+        mode='lines+markers',
+        name='DOWN Deviations',
+        line=dict(color='red', width=2),
+        marker=dict(size=8)
+    ))
+    
+    fig.update_layout(
+        title='Sensitivity Analysis: Deviations vs Threshold',
+        xaxis_title='Threshold (percentage points)',
+        yaxis_title='Number of Deviations',
+        height=500,
+        hovermode='x unified'
+    )
+    
+    return fig
+
+
 def create_summary_dashboard(results: pd.DataFrame) -> dict:
     """
     Create summary statistics and top insights from flagged deviations.
@@ -278,17 +357,59 @@ def main():
                 index=default_idx
             )
             
-            col1, col2 = st.columns(2)
-            with col1:
-                threshold = st.number_input(
-                    "Deviation threshold (percentage points)",
-                    min_value=0.0,
-                    max_value=100.0,
-                    value=10.0,
-                    step=0.5,
-                    help="App will flag deviations above +threshold or below −threshold"
-                )
-            with col2:
+            analysis_mode = st.radio(
+                "Analysis Mode",
+                ["Single Threshold", "Multi-Threshold Sensitivity Analysis"],
+                horizontal=True
+            )
+            
+            if analysis_mode == "Single Threshold":
+                col1, col2 = st.columns(2)
+                with col1:
+                    threshold = st.number_input(
+                        "Deviation threshold (percentage points)",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=10.0,
+                        step=0.5,
+                        help="App will flag deviations above +threshold or below −threshold"
+                    )
+                with col2:
+                    min_contracts = st.number_input(
+                        "Minimum contracts per agent (in line of business)",
+                        min_value=0,
+                        max_value=1000,
+                        value=0,
+                        step=1,
+                        help="Filter out agents with fewer contracts to focus on statistically significant cases"
+                    )
+            else:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    threshold_min = st.number_input(
+                        "Min threshold (pp)",
+                        min_value=0.0,
+                        max_value=50.0,
+                        value=5.0,
+                        step=0.5
+                    )
+                with col2:
+                    threshold_max = st.number_input(
+                        "Max threshold (pp)",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=25.0,
+                        step=0.5
+                    )
+                with col3:
+                    threshold_step = st.number_input(
+                        "Step size (pp)",
+                        min_value=0.5,
+                        max_value=10.0,
+                        value=2.5,
+                        step=0.5
+                    )
+                
                 min_contracts = st.number_input(
                     "Minimum contracts per agent (in line of business)",
                     min_value=0,
@@ -311,108 +432,142 @@ def main():
                         st.error(f"Missing required columns: {', '.join(missing_cols)}")
                         st.write("Available columns:", list(df.columns))
                     else:
-                        results = compute_outliers_count_only(df, threshold, min_contracts)
+                        if analysis_mode == "Multi-Threshold Sensitivity Analysis":
+                            if threshold_step <= 0:
+                                st.error("Step size must be greater than 0.")
+                            elif threshold_min > threshold_max:
+                                st.error("Minimum threshold must be less than or equal to maximum threshold.")
+                            elif threshold_step > (threshold_max - threshold_min):
+                                st.error("Step size is too large for the given range.")
+                            else:
+                                threshold_range = []
+                                current = threshold_min
+                                while current <= threshold_max + 1e-9:
+                                    threshold_range.append(round(current, 2))
+                                    current += threshold_step
+                                
+                                if len(threshold_range) == 0:
+                                    st.error("Invalid threshold range. Please check your min, max, and step values.")
+                                else:
+                                    st.info(f"Running sensitivity analysis for {len(threshold_range)} threshold values...")
+                                    
+                                    sensitivity_df = compute_sensitivity_analysis(df, threshold_range, min_contracts)
+                                    
+                                    st.subheader("📊 Sensitivity Analysis Results")
+                                    
+                                    col1, col2 = st.columns([2, 1])
+                                    with col1:
+                                        sensitivity_chart = create_sensitivity_chart(sensitivity_df)
+                                        st.plotly_chart(sensitivity_chart, use_container_width=True)
+                                    with col2:
+                                        st.markdown("**Summary Table**")
+                                        st.dataframe(sensitivity_df, hide_index=True, use_container_width=True)
+                                    
+                                    st.info("💡 Tip: Lower thresholds will flag more deviations, while higher thresholds focus on more extreme cases.")
                         
-                        if len(results) == 0:
-                            st.warning(f"No deviations found above the threshold of ±{threshold} percentage points.")
                         else:
-                            st.success(f"Found {len(results):,} flagged deviations")
+                            results = compute_outliers_count_only(df, threshold, min_contracts)
                             
-                            up_count = (results['Direction'] == 'UP').sum()
-                            down_count = (results['Direction'] == 'DOWN').sum()
-                            
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("Total Deviations", len(results))
-                            with col2:
-                                st.metric("UP Deviations", up_count)
-                            with col3:
-                                st.metric("DOWN Deviations", down_count)
-                            
-                            st.subheader("📊 Summary Dashboard")
-                            summary = create_summary_dashboard(results)
-                            
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.markdown("**Top Deviating Agents**")
-                                st.dataframe(summary['top_agents'], hide_index=True, use_container_width=True)
-                            with col2:
-                                st.markdown("**Most Affected Insurers**")
-                                st.dataframe(summary['affected_insurers'], hide_index=True, use_container_width=True)
-                            with col3:
-                                st.markdown("**Lines of Business with Most Deviations**")
-                                st.dataframe(summary['top_lobs'], hide_index=True, use_container_width=True)
-                            
-                            st.divider()
-                            st.subheader("📈 Distribution Visualizations")
-                            
-                            with st.expander("View Agent Distribution Charts", expanded=False):
-                                col_a, col_b = st.columns(2)
-                                with col_a:
-                                    unique_agents = sorted(results['Agent ID'].unique())
-                                    selected_agent = st.selectbox(
-                                        "Select an agent to visualize",
-                                        unique_agents,
-                                        key="agent_viz_select"
-                                    )
-                                with col_b:
-                                    agent_lobs = sorted(results[results['Agent ID'] == selected_agent]['Line of Business'].unique())
-                                    selected_lob = st.selectbox(
-                                        "Select line of business",
-                                        agent_lobs,
-                                        key="lob_viz_select"
-                                    )
+                            if len(results) == 0:
+                                st.warning(f"No deviations found above the threshold of ±{threshold} percentage points.")
+                            else:
+                                st.success(f"Found {len(results):,} flagged deviations")
                                 
-                                if selected_agent and selected_lob:
-                                    fig = create_distribution_chart(selected_agent, selected_lob, df)
-                                    if fig:
-                                        st.plotly_chart(fig, use_container_width=True)
-                                    else:
-                                        st.info("No data available for this agent in this line of business.")
-                            
-                            st.divider()
-                            st.subheader("📋 Detailed Flagged Deviations")
-                            
-                            styled_df = style_dataframe(results)
-                            st.dataframe(
-                                styled_df,
-                                use_container_width=True,
-                                height=600
-                            )
-                            
-                            output = io.BytesIO()
-                            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                                results.to_excel(writer, index=False, sheet_name='Deviations')
+                                up_count = (results['Direction'] == 'UP').sum()
+                                down_count = (results['Direction'] == 'DOWN').sum()
                                 
-                                workbook = writer.book
-                                worksheet = writer.sheets['Deviations']
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("Total Deviations", len(results))
+                                with col2:
+                                    st.metric("UP Deviations", up_count)
+                                with col3:
+                                    st.metric("DOWN Deviations", down_count)
                                 
-                                up_format = workbook.add_format({'bg_color': '#90EE90'})
-                                down_format = workbook.add_format({'bg_color': '#FFB6C6'})
+                                st.subheader("📊 Summary Dashboard")
+                                summary = create_summary_dashboard(results)
                                 
-                                diff_col_idx = results.columns.get_loc('Difference (pp)')
-                                direction_col_idx = results.columns.get_loc('Direction')
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.markdown("**Top Deviating Agents**")
+                                    st.dataframe(summary['top_agents'], hide_index=True, use_container_width=True)
+                                with col2:
+                                    st.markdown("**Most Affected Insurers**")
+                                    st.dataframe(summary['affected_insurers'], hide_index=True, use_container_width=True)
+                                with col3:
+                                    st.markdown("**Lines of Business with Most Deviations**")
+                                    st.dataframe(summary['top_lobs'], hide_index=True, use_container_width=True)
                                 
-                                for row_idx, direction in enumerate(results['Direction'], start=1):
-                                    if direction == 'UP':
-                                        worksheet.write(row_idx, diff_col_idx, 
-                                                      results.iloc[row_idx - 1]['Difference (pp)'], 
-                                                      up_format)
-                                        worksheet.write(row_idx, direction_col_idx, 'UP', up_format)
-                                    elif direction == 'DOWN':
-                                        worksheet.write(row_idx, diff_col_idx, 
-                                                      results.iloc[row_idx - 1]['Difference (pp)'], 
-                                                      down_format)
-                                        worksheet.write(row_idx, direction_col_idx, 'DOWN', down_format)
-                            
-                            excel_data = output.getvalue()
-                            
-                            st.download_button(
-                                label="📥 Download Results as Excel",
-                                data=excel_data,
-                                file_name=f"fbi_outliers_threshold_{threshold}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
+                                st.divider()
+                                st.subheader("📈 Distribution Visualizations")
+                                
+                                with st.expander("View Agent Distribution Charts", expanded=False):
+                                    col_a, col_b = st.columns(2)
+                                    with col_a:
+                                        unique_agents = sorted(results['Agent ID'].unique())
+                                        selected_agent = st.selectbox(
+                                            "Select an agent to visualize",
+                                            unique_agents,
+                                            key="agent_viz_select"
+                                        )
+                                    with col_b:
+                                        agent_lobs = sorted(results[results['Agent ID'] == selected_agent]['Line of Business'].unique())
+                                        selected_lob = st.selectbox(
+                                            "Select line of business",
+                                            agent_lobs,
+                                            key="lob_viz_select"
+                                        )
+                                    
+                                    if selected_agent and selected_lob:
+                                        fig = create_distribution_chart(selected_agent, selected_lob, df)
+                                        if fig:
+                                            st.plotly_chart(fig, use_container_width=True)
+                                        else:
+                                            st.info("No data available for this agent in this line of business.")
+                                
+                                st.divider()
+                                st.subheader("📋 Detailed Flagged Deviations")
+                                
+                                styled_df = style_dataframe(results)
+                                st.dataframe(
+                                    styled_df,
+                                    use_container_width=True,
+                                    height=600
+                                )
+                                
+                                output = io.BytesIO()
+                                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                                    results.to_excel(writer, index=False, sheet_name='Deviations')
+                                    
+                                    workbook = writer.book
+                                    worksheet = writer.sheets['Deviations']
+                                    
+                                    up_format = workbook.add_format({'bg_color': '#90EE90'})
+                                    down_format = workbook.add_format({'bg_color': '#FFB6C6'})
+                                    
+                                    diff_col_idx = results.columns.get_loc('Difference (pp)')
+                                    direction_col_idx = results.columns.get_loc('Direction')
+                                    
+                                    for row_idx, direction in enumerate(results['Direction'], start=1):
+                                        if direction == 'UP':
+                                            worksheet.write(row_idx, diff_col_idx, 
+                                                          results.iloc[row_idx - 1]['Difference (pp)'], 
+                                                          up_format)
+                                            worksheet.write(row_idx, direction_col_idx, 'UP', up_format)
+                                        elif direction == 'DOWN':
+                                            worksheet.write(row_idx, diff_col_idx, 
+                                                          results.iloc[row_idx - 1]['Difference (pp)'], 
+                                                          down_format)
+                                            worksheet.write(row_idx, direction_col_idx, 'DOWN', down_format)
+                                
+                                excel_data = output.getvalue()
+                                
+                                st.download_button(
+                                    label="📥 Download Results as Excel",
+                                    data=excel_data,
+                                    file_name=f"fbi_outliers_threshold_{threshold}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                )
                         
         except Exception as e:
             st.error(f"Error processing file: {str(e)}")
