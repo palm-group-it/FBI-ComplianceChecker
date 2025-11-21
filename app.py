@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
 import io
 from typing import Tuple
 
@@ -109,6 +111,84 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold: float, min_contract
     output = output.drop(columns=['abs_diff'])
     
     return output
+
+
+def create_distribution_chart(agent_id: str, lob: str, source_df: pd.DataFrame) -> go.Figure:
+    """
+    Create a visualization comparing an agent's insurer distribution to baseline for a specific line of business.
+    
+    Args:
+        agent_id: The agent ID to visualize
+        lob: Line of business to analyze
+        source_df: Original DataFrame with columns 'UkKodja1', 'Megnevezés', 'RövidNév'
+        
+    Returns:
+        Plotly figure showing distribution comparison
+    """
+    required_cols = ['UkKodja1', 'Megnevezés', 'RövidNév']
+    df = source_df[required_cols].copy()
+    df.columns = ['agent_id', 'line_of_business', 'insurer']
+    
+    df['agent_id'] = df['agent_id'].fillna('(Missing)')
+    df['line_of_business'] = df['line_of_business'].fillna('(Missing)')
+    df['insurer'] = df['insurer'].fillna('(Missing)')
+    
+    lob_data = df[df['line_of_business'] == lob].copy()
+    
+    baseline = (
+        lob_data.groupby('insurer', dropna=False)
+        .size()
+        .reset_index(name='base_count')
+    )
+    baseline['base_share'] = (baseline['base_count'] / baseline['base_count'].sum()) * 100
+    
+    agent_lob_data = lob_data[lob_data['agent_id'] == agent_id].copy()
+    
+    if len(agent_lob_data) == 0:
+        return None
+    
+    agent_dist = (
+        agent_lob_data.groupby('insurer', dropna=False)
+        .size()
+        .reset_index(name='agent_count')
+    )
+    agent_dist['agent_share'] = (agent_dist['agent_count'] / agent_dist['agent_count'].sum()) * 100
+    
+    comparison = baseline.merge(agent_dist, on='insurer', how='outer').fillna(0)
+    comparison = comparison.sort_values('base_share', ascending=False)
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        name='Company Baseline',
+        x=comparison['insurer'],
+        y=comparison['base_share'],
+        marker_color='lightblue',
+        text=comparison['base_share'].round(1),
+        textposition='auto',
+        hovertemplate='<b>%{x}</b><br>Company: %{y:.1f}%<extra></extra>'
+    ))
+    
+    fig.add_trace(go.Bar(
+        name=f'Agent {agent_id}',
+        x=comparison['insurer'],
+        y=comparison['agent_share'],
+        marker_color='coral',
+        text=comparison['agent_share'].round(1),
+        textposition='auto',
+        hovertemplate='<b>%{x}</b><br>Agent: %{y:.1f}%<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=f'Insurer Distribution: Agent {agent_id} vs Company Baseline<br>Line of Business: {lob}',
+        xaxis_title='Insurer',
+        yaxis_title='Share %',
+        barmode='group',
+        height=500,
+        hovermode='x unified'
+    )
+    
+    return fig
 
 
 def create_summary_dashboard(results: pd.DataFrame) -> dict:
@@ -262,6 +342,33 @@ def main():
                             with col3:
                                 st.markdown("**Lines of Business with Most Deviations**")
                                 st.dataframe(summary['top_lobs'], hide_index=True, use_container_width=True)
+                            
+                            st.divider()
+                            st.subheader("📈 Distribution Visualizations")
+                            
+                            with st.expander("View Agent Distribution Charts", expanded=False):
+                                col_a, col_b = st.columns(2)
+                                with col_a:
+                                    unique_agents = sorted(results['Agent ID'].unique())
+                                    selected_agent = st.selectbox(
+                                        "Select an agent to visualize",
+                                        unique_agents,
+                                        key="agent_viz_select"
+                                    )
+                                with col_b:
+                                    agent_lobs = sorted(results[results['Agent ID'] == selected_agent]['Line of Business'].unique())
+                                    selected_lob = st.selectbox(
+                                        "Select line of business",
+                                        agent_lobs,
+                                        key="lob_viz_select"
+                                    )
+                                
+                                if selected_agent and selected_lob:
+                                    fig = create_distribution_chart(selected_agent, selected_lob, df)
+                                    if fig:
+                                        st.plotly_chart(fig, use_container_width=True)
+                                    else:
+                                        st.info("No data available for this agent in this line of business.")
                             
                             st.divider()
                             st.subheader("📋 Detailed Flagged Deviations")
