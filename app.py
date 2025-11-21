@@ -6,17 +6,22 @@ from typing import Tuple
 st.set_page_config(page_title="FBI Insurer-Mix Deviation Check", layout="wide")
 
 
-def compute_outliers_count_only(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
+def compute_outliers_count_only(df: pd.DataFrame, threshold: float, min_contracts: int = 0) -> pd.DataFrame:
     """
     Compute insurer mix deviations by count only.
     
     Args:
         df: DataFrame with columns 'UkKodja1', 'Megnevezés', 'RövidNév'
         threshold: Deviation threshold in percentage points
+        min_contracts: Minimum number of contracts an agent must have in a line of business
+                      to be included in the flagged results (baseline still uses all agents)
         
     Returns:
         DataFrame with flagged deviations
     """
+    if min_contracts < 0:
+        raise ValueError("min_contracts must be non-negative")
+        
     required_cols = ['UkKodja1', 'Megnevezés', 'RövidNév']
     for col in required_cols:
         if col not in df.columns:
@@ -71,6 +76,9 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold: float) -> pd.DataFr
     results['diff_pp'] = (results['agent_share'] - results['base_share']) * 100
     
     results = results.dropna(subset=['diff_pp'])
+    
+    if min_contracts > 0:
+        results = results[results['agent_line_total'] >= min_contracts].copy()
     
     flagged = results[results['diff_pp'].abs() > threshold].copy()
     
@@ -151,14 +159,25 @@ def main():
                 index=default_idx
             )
             
-            threshold = st.number_input(
-                "Deviation threshold (percentage points)",
-                min_value=0.0,
-                max_value=100.0,
-                value=10.0,
-                step=0.5,
-                help="App will flag deviations above +threshold or below −threshold"
-            )
+            col1, col2 = st.columns(2)
+            with col1:
+                threshold = st.number_input(
+                    "Deviation threshold (percentage points)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=10.0,
+                    step=0.5,
+                    help="App will flag deviations above +threshold or below −threshold"
+                )
+            with col2:
+                min_contracts = st.number_input(
+                    "Minimum contracts per agent (in line of business)",
+                    min_value=0,
+                    max_value=1000,
+                    value=0,
+                    step=1,
+                    help="Filter out agents with fewer contracts to focus on statistically significant cases"
+                )
             
             if st.button("🚀 Run Analysis", type="primary"):
                 with st.spinner("Analyzing data..."):
@@ -173,7 +192,7 @@ def main():
                         st.error(f"Missing required columns: {', '.join(missing_cols)}")
                         st.write("Available columns:", list(df.columns))
                     else:
-                        results = compute_outliers_count_only(df, threshold)
+                        results = compute_outliers_count_only(df, threshold, min_contracts)
                         
                         if len(results) == 0:
                             st.warning(f"No deviations found above the threshold of ±{threshold} percentage points.")
