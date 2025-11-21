@@ -1,6 +1,29 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import base64
+
+def show_fullscreen_overlay_gif(gif_path="loading.gif"):
+    with open(gif_path, "rb") as f:
+        data = base64.b64encode(f.read()).decode("utf-8")
+
+    overlay_html = f"""
+    <div id="overlay-loading" style="
+        position: fixed;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        background: rgba(255, 255, 255, 0.88);
+        backdrop-filter: blur(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999999;
+    ">
+        <img src="data:image/gif;base64,{data}" style="width:190px;">
+    </div>
+    """
+    return overlay_html
+
 
 # -------------------------------------------------
 # Page config
@@ -82,7 +105,7 @@ CUSTOM_CSS = """
   /* Buttons */
   /* Buttons */
   .stButton > button {
-    border-radius: 12px !important;
+    border-radius: 12px !ant;
     padding: 0.65rem 1rem !important;
     font-weight: 700 !important;
     border: 1px solid #e7e9f2 !important;
@@ -287,7 +310,54 @@ else:
     m3.metric("Ágazatok száma", f"{df[line_col].nunique(dropna=False):,}")
 
     st.markdown("")
-    if st.button("Elemzés futtatása"):
+if st.button("Elemzés futtatása"):
+    # 1) overlay előkészítése
+    overlay = st.empty()
+
+    # 2) overlay megjelenítése a loading.gif felhasználásával
+    overlay.markdown(show_fullscreen_overlay_gif("loading.gif"), unsafe_allow_html=True)
+
+    # 3) Az elemzés futtatása
+    outliers = compute_outliers_count_only(df, threshold_pct)
+
+    # 4) overlay eltüntetése
+    overlay.empty()
+
+    # 5) elkészült jelzés
+    st.success("Kész! 🎉")
+
+    # 6) táblázat + export a meglévő kódod szerint
+    st.markdown(
+        """
+        <div class="card" style="margin-top:6px;">
+          <div class="card-title">Kiugró eltérések</div>
+          <div class="muted">Csak azok a sorok jelennek meg, ahol az eltérés abszolút értéke meghaladja a küszöböt (UP vagy DOWN).</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown('<div class="dataframe-wrap">', unsafe_allow_html=True)
+    styled = (
+        outliers.style
+          .applymap(color_diff, subset=["Difference (pp)"])
+          .applymap(color_direction, subset=["Irány"])
+    )
+    st.dataframe(styled, use_container_width=True, height=520)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    export_name = f"fbi_outliers_threshold_{threshold_pct:.1f}.xlsx"
+    with pd.ExcelWriter(export_name, engine="xlsxwriter") as writer:
+        outliers.to_excel(writer, index=False, sheet_name="outliers")
+
+    with open(export_name, "rb") as f:
+        st.download_button(
+            "Eredmények letöltése (.xlsx)",
+            data=f,
+            file_name=export_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
         outliers = compute_outliers_count_only(df, threshold_pct)
 
         st.markdown(
