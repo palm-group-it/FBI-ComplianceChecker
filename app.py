@@ -206,10 +206,11 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
     out = agent.merge(base, on=[line_col, insurer_col], how="left")
     out["diff_pp"] = (out["agent_share"] - out["base_share"]) * 100
 
-    out["direction"] = np.where(
-        out["diff_pp"] > threshold_pct, "UP",
-        np.where(out["diff_pp"] < -threshold_pct, "DOWN", np.nan)
-    )
+    out["direction"] = np.select(
+    [out["diff_pp"] > threshold_pct, out["diff_pp"] < -threshold_pct],
+    ["UP", "DOWN"],
+    default=None
+)
 
     outliers = out[out["direction"].notna()].copy()
 
