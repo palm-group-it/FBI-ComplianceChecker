@@ -80,7 +80,6 @@ CUSTOM_CSS = """
   .badge-info { background: #eef2ff; color: #3730a3; border-color:#dfe3ff; }
 
   /* Buttons */
-  /* Buttons */
   .stButton > button {
     border-radius: 12px !important;
     padding: 0.65rem 1rem !important;
@@ -90,24 +89,7 @@ CUSTOM_CSS = """
     color: #ffffff !important;
     box-shadow: 0 6px 14px rgba(15, 23, 42, 0.10) !important;
   }
-
   .stButton > button:hover {
-    background: #111c34 !important;
-    transform: translateY(-1px);
-  }
-
-  /* Download button (st.download_button) */
-  .stDownloadButton > button {
-    border-radius: 12px !important;
-    padding: 0.65rem 1rem !important;
-    font-weight: 700 !important;
-    border: 1px solid #e7e9f2 !important;
-    background: #0f172a !important;
-    color: #ffffff !important;
-    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.10) !important;
-  }
-
-  .stDownloadButton > button:hover {
     background: #111c34 !important;
     transform: translateY(-1px);
   }
@@ -204,11 +186,9 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
     base = d.groupby([line_col, insurer_col], dropna=False).agg(
         base_count=("count", "sum")
     ).reset_index()
-
     base_totals = d.groupby([line_col], dropna=False).agg(
         line_total=("count", "sum")
     ).reset_index()
-
     base = base.merge(base_totals, on=line_col, how="left")
     base["base_share"] = base["base_count"] / base["line_total"]
 
@@ -216,30 +196,28 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
     agent = d.groupby([agent_col, line_col, insurer_col], dropna=False).agg(
         agent_count=("count", "sum")
     ).reset_index()
-
     agent_totals = d.groupby([agent_col, line_col], dropna=False).agg(
         agent_line_total=("count", "sum")
     ).reset_index()
-
     agent = agent.merge(agent_totals, on=[agent_col, line_col], how="left")
     agent["agent_share"] = agent["agent_count"] / agent["agent_line_total"]
 
-    # 3) baseline vs agent compare (%)
+    # 3) compare
     out = agent.merge(base, on=[line_col, insurer_col], how="left")
     out["diff_pp"] = (out["agent_share"] - out["base_share"]) * 100
 
-    # --- ROBUSZTUS SZŰRÉS: abs eltérés küszöb felett ---
-    outliers = out[np.abs(out["diff_pp"]) > float(threshold_pct)].copy()
+    out["direction"] = np.where(
+        out["diff_pp"] > threshold_pct, "UP",
+        np.where(out["diff_pp"] < -threshold_pct, "DOWN", np.nan)
+    )
 
-    # irány (UP/DOWN)
-    outliers["direction"] = np.where(outliers["diff_pp"] > 0, "UP", "DOWN")
+    outliers = out[out["direction"].notna()].copy()
 
-    # százalékos megjelenítés
+    # presentation columns
     outliers["Company Share %"] = (outliers["base_share"] * 100).round(2)
     outliers["Agent Share %"] = (outliers["agent_share"] * 100).round(2)
     outliers["Difference (pp)"] = outliers["diff_pp"].round(2)
 
-    # átnevezés a felhasználói felületnek megfelelően
     outliers = outliers.rename(columns={
         agent_col: "Üzletkötő kód",
         line_col: "Ágazat",
@@ -251,15 +229,7 @@ def compute_outliers_count_only(df: pd.DataFrame, threshold_pct: float):
         "direction": "Irány"
     })
 
-    # sorbarendezés: üzletkötő → ágazat → eltérés mértéke
-    outliers["abs_diff"] = outliers["Difference (pp)"].abs()
-    outliers = outliers.sort_values(
-        by=["Üzletkötő kód", "Ágazat", "abs_diff"],
-        ascending=[True, True, False]
-    ).drop(columns=["abs_diff"])
-
-    return outliers
-
+    # sort by abs diff desc within agent+line
     outliers["abs_diff"] = outliers["Difference (pp)"].abs()
     outliers = outliers.sort_values(
         by=["Üzletkötő kód", "Ágazat", "abs_diff"],
