@@ -443,7 +443,7 @@ def main():
                                 threshold_range = []
                                 current = threshold_min
                                 while current <= threshold_max + 1e-9:
-                                    threshold_range.append(round(current, 2))
+                                    threshold_range.append(current)
                                     current += threshold_step
                                 
                                 if len(threshold_range) == 0:
